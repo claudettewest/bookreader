@@ -44,6 +44,15 @@ const state = {
   menuBookId: null
 };
 
+const speechState = {
+  paragraph: 0,
+  session: 0,
+  speaking: false,
+  paused: false,
+  volume: Number(localStorage.getItem('bookReaderSpeechVolume') ?? 0.8),
+  voices: []
+};
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
@@ -57,6 +66,110 @@ function showToast(message) {
   toast.classList.add('show');
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+function updateSpeechControls(status = speechState.paused ? 'Paused' : speechState.speaking ? 'Reading' : 'Ready') {
+  $('#speech-status').textContent = status;
+  $('#speech-play').classList.toggle('playing', speechState.speaking && !speechState.paused);
+  $('#speech-play').setAttribute('aria-label', speechState.speaking && !speechState.paused ? 'Pause' : 'Play');
+  $('#tts-button').classList.toggle('active', speechState.speaking || !$('#speech-panel').hidden);
+}
+
+function populateDeviceVoices() {
+  if (!('speechSynthesis' in window)) return;
+  speechState.voices = window.speechSynthesis.getVoices();
+  const select = $('#speech-voice');
+  const savedVoice = localStorage.getItem('bookReaderSpeechVoice') || '';
+  select.replaceChildren(new Option('Device default', ''));
+  speechState.voices.forEach(voice => select.add(new Option(`${voice.name} · ${voice.lang}`, voice.voiceURI)));
+  if ([...select.options].some(option => option.value === savedVoice)) select.value = savedVoice;
+}
+
+function clearSpeechHighlight() {
+  $$('#chapter-copy p.speaking').forEach(paragraph => paragraph.classList.remove('speaking'));
+}
+
+function finishSpeech() {
+  speechState.speaking = false;
+  speechState.paused = false;
+  speechState.paragraph = 0;
+  clearSpeechHighlight();
+  updateSpeechControls('Complete');
+}
+
+function speakParagraph(session) {
+  if (session !== speechState.session || !speechState.speaking) return;
+  const paragraphs = $$('#chapter-copy p');
+  if (speechState.paragraph >= paragraphs.length) { finishSpeech(); return; }
+  const paragraph = paragraphs[speechState.paragraph];
+  clearSpeechHighlight();
+  paragraph.classList.add('speaking');
+  paragraph.scrollIntoView({behavior:'smooth', block:'center'});
+  const utterance = new SpeechSynthesisUtterance(paragraph.textContent);
+  utterance.volume = speechState.volume;
+  const selectedVoice = speechState.voices.find(voice => voice.voiceURI === $('#speech-voice').value);
+  if (selectedVoice) utterance.voice = selectedVoice;
+  utterance.onstart = () => { if (session === speechState.session) updateSpeechControls('Reading'); };
+  utterance.onend = () => {
+    if (session !== speechState.session) return;
+    speechState.paragraph += 1;
+    speakParagraph(session);
+  };
+  utterance.onerror = event => {
+    if (session !== speechState.session || event.error === 'canceled' || event.error === 'interrupted') return;
+    stopSpeech();
+    showToast('Your device could not read this passage');
+  };
+  window.speechSynthesis.speak(utterance);
+}
+
+function startSpeech() {
+  if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+    showToast('Text-to-speech is not available on this device');
+    return;
+  }
+  const paragraphs = $$('#chapter-copy p');
+  if (!paragraphs.length) { showToast('There is no readable text in this chapter'); return; }
+  speechState.session += 1;
+  speechState.paragraph = 0;
+  speechState.speaking = true;
+  speechState.paused = false;
+  updateSpeechControls('Starting…');
+  speakParagraph(speechState.session);
+}
+
+function toggleSpeech() {
+  if (!speechState.speaking) { startSpeech(); return; }
+  if (speechState.paused) {
+    window.speechSynthesis.resume();
+    speechState.paused = false;
+    updateSpeechControls('Reading');
+  } else {
+    window.speechSynthesis.pause();
+    speechState.paused = true;
+    updateSpeechControls('Paused');
+  }
+}
+
+function stopSpeech(status = 'Ready') {
+  speechState.session += 1;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  speechState.speaking = false;
+  speechState.paused = false;
+  speechState.paragraph = 0;
+  clearSpeechHighlight();
+  updateSpeechControls(status);
+}
+
+function restartSpeechParagraph() {
+  if (!speechState.speaking) return;
+  const paragraph = speechState.paragraph;
+  speechState.session += 1;
+  window.speechSynthesis.cancel();
+  speechState.paragraph = paragraph;
+  speechState.paused = false;
+  const session = speechState.session;
+  setTimeout(() => speakParagraph(session), 60);
 }
 
 function openBookDatabase() {
@@ -335,6 +448,8 @@ function numberWord(number) {
 }
 
 function openReader(bookId) {
+  stopSpeech();
+  $('#speech-panel').hidden = true;
   state.book = bookId;
   if (bookId !== 'garden') state.chapter = 0;
   state.view = 'reader';
@@ -348,6 +463,8 @@ function openReader(bookId) {
 }
 
 function showLibrary() {
+  stopSpeech();
+  $('#speech-panel').hidden = true;
   state.view = 'library';
   libraryView.hidden = false;
   savedView.hidden = true;
@@ -359,6 +476,8 @@ function showLibrary() {
 }
 
 function showSaved(type) {
+  stopSpeech();
+  $('#speech-panel').hidden = true;
   state.view = type;
   libraryView.hidden = true;
   readerView.hidden = true;
@@ -380,6 +499,7 @@ function showSaved(type) {
 }
 
 function changeChapter(index) {
+  stopSpeech();
   const activeBook = books.find(book => book.id === state.book);
   const total = activeBook?.chapters?.length || 12;
   state.chapter = Math.max(0, Math.min(total - 1, index));
@@ -427,7 +547,31 @@ $$('.nav-item').forEach(button => button.onclick = () => button.dataset.view ===
 $('#theme-toggle').onclick = () => { document.body.classList.toggle('dark'); localStorage.setItem('bookReaderDark', document.body.classList.contains('dark')); };
 if (localStorage.getItem('bookReaderDark') === 'true') document.body.classList.add('dark');
 $('#contents-toggle').onclick = () => $('#chapter-panel').classList.toggle('open');
-$('#type-button').onclick = () => { $('#settings-panel').hidden = !$('#settings-panel').hidden; };
+$('#type-button').onclick = () => { $('#speech-panel').hidden = true; $('#settings-panel').hidden = !$('#settings-panel').hidden; updateSpeechControls(); };
+$('#tts-button').onclick = () => {
+  if (!('speechSynthesis' in window)) { showToast('Text-to-speech is not available on this device'); return; }
+  $('#settings-panel').hidden = true;
+  $('#speech-panel').hidden = !$('#speech-panel').hidden;
+  updateSpeechControls();
+};
+$('#speech-play').onclick = toggleSpeech;
+$('#speech-stop').onclick = () => stopSpeech();
+$('#speech-volume').value = speechState.volume;
+$('#speech-volume-value').textContent = `${Math.round(speechState.volume * 100)}%`;
+$('#speech-volume').oninput = event => {
+  speechState.volume = Number(event.target.value);
+  $('#speech-volume-value').textContent = `${Math.round(speechState.volume * 100)}%`;
+  localStorage.setItem('bookReaderSpeechVolume', speechState.volume);
+  restartSpeechParagraph();
+};
+$('#speech-voice').onchange = event => {
+  localStorage.setItem('bookReaderSpeechVoice', event.target.value);
+  restartSpeechParagraph();
+};
+if ('speechSynthesis' in window) {
+  populateDeviceVoices();
+  window.speechSynthesis.addEventListener('voiceschanged', populateDeviceVoices);
+}
 $('#font-down').onclick = () => { state.fontSize = Math.max(14,state.fontSize-1); localStorage.setItem('bookReaderFontSize',state.fontSize); applyReaderSettings(); };
 $('#font-up').onclick = () => { state.fontSize = Math.min(25,state.fontSize+1); localStorage.setItem('bookReaderFontSize',state.fontSize); applyReaderSettings(); };
 $('#width-slider').oninput = event => { state.width = Number(event.target.value); localStorage.setItem('bookReaderWidth',state.width); applyReaderSettings(); };
@@ -466,5 +610,6 @@ document.addEventListener('keydown', event => {
   if (state.view !== 'reader') return;
   if (event.key === 'ArrowRight') changeChapter(state.chapter + 1);
   if (event.key === 'ArrowLeft') changeChapter(state.chapter - 1);
-  if (event.key === 'Escape') { $('#settings-panel').hidden = true; $('#chapter-panel').classList.remove('open'); }
+  if (event.key === 'Escape') { $('#settings-panel').hidden = true; $('#speech-panel').hidden = true; updateSpeechControls(); $('#chapter-panel').classList.remove('open'); }
 });
+window.addEventListener('beforeunload', () => { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); });
