@@ -46,6 +46,7 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
 const libraryView = $('#library-view');
 const readerView = $('#reader-view');
 const savedView = $('#saved-view');
@@ -58,12 +59,160 @@ function showToast(message) {
   showToast.timer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
+function openBookDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('book-reader-library', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('books', {keyPath:'id'});
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveImportedBook(book) {
+  const database = await openBookDatabase();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction('books', 'readwrite');
+    transaction.objectStore('books').put(book);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+async function deleteImportedBook(id) {
+  const database = await openBookDatabase();
+  const transaction = database.transaction('books', 'readwrite');
+  transaction.objectStore('books').delete(id);
+  transaction.oncomplete = () => database.close();
+}
+
+async function restoreImportedBooks() {
+  try {
+    const database = await openBookDatabase();
+    const imported = await new Promise((resolve, reject) => {
+      const request = database.transaction('books').objectStore('books').getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    const known = new Set(books.map(book => book.id));
+    books.push(...imported.filter(book => !known.has(book.id)));
+    renderBooks($('#library-search').value);
+  } catch (error) {
+    console.warn('Imported books could not be restored', error);
+  }
+}
+
+function normalizeArchivePath(path) {
+  const parts = [];
+  decodeURIComponent(path).replace(/\\/g, '/').split('/').forEach(part => {
+    if (!part || part === '.') return;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  });
+  return parts.join('/');
+}
+
+function createZipReader(buffer) {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  let end = bytes.length - 22;
+  const minimum = Math.max(0, bytes.length - 65557);
+  while (end >= minimum && view.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < minimum) throw new Error('This EPUB is not a valid ZIP archive');
+  const entries = new Map();
+  let cursor = view.getUint32(end + 16, true);
+  const count = view.getUint16(end + 10, true);
+  for (let index = 0; index < count; index++) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) break;
+    const method = view.getUint16(cursor + 10, true);
+    const size = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = normalizeArchivePath(decoder.decode(bytes.slice(cursor + 46, cursor + 46 + nameLength)));
+    entries.set(name, {method, size, localOffset});
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return {
+    has: path => entries.has(normalizeArchivePath(path)),
+    async read(path) {
+      const entry = entries.get(normalizeArchivePath(path));
+      if (!entry) throw new Error(`Missing EPUB resource: ${path}`);
+      const nameLength = view.getUint16(entry.localOffset + 26, true);
+      const extraLength = view.getUint16(entry.localOffset + 28, true);
+      const start = entry.localOffset + 30 + nameLength + extraLength;
+      const compressed = bytes.slice(start, start + entry.size);
+      if (entry.method === 0) return compressed;
+      if (entry.method !== 8 || typeof DecompressionStream === 'undefined') throw new Error('This EPUB uses unsupported compression');
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+  };
+}
+
+function xmlElements(document, localName) {
+  return [...document.getElementsByTagNameNS('*', localName)];
+}
+
+async function parseEpub(file) {
+  const archive = createZipReader(await file.arrayBuffer());
+  const decoder = new TextDecoder();
+  const parser = new DOMParser();
+  const container = parser.parseFromString(decoder.decode(await archive.read('META-INF/container.xml')), 'application/xml');
+  const packagePath = xmlElements(container, 'rootfile')[0]?.getAttribute('full-path');
+  if (!packagePath) throw new Error('This EPUB has no readable package document');
+  const packageDocument = parser.parseFromString(decoder.decode(await archive.read(packagePath)), 'application/xml');
+  const title = xmlElements(packageDocument, 'title')[0]?.textContent.trim() || file.name.replace(/\.epub$/i, '');
+  const author = xmlElements(packageDocument, 'creator')[0]?.textContent.trim() || 'Unknown author';
+  const basePath = packagePath.includes('/') ? packagePath.slice(0, packagePath.lastIndexOf('/') + 1) : '';
+  const manifest = new Map(xmlElements(packageDocument, 'item').map(item => [item.getAttribute('id'), item.getAttribute('href')]));
+  const spine = xmlElements(packageDocument, 'itemref').map(item => item.getAttribute('idref'));
+  const chapters = [];
+  for (const id of spine) {
+    const href = manifest.get(id);
+    if (!href) continue;
+    const resourcePath = normalizeArchivePath(basePath + href.split('#')[0]);
+    if (!archive.has(resourcePath)) continue;
+    const source = decoder.decode(await archive.read(resourcePath));
+    let document = parser.parseFromString(source, 'application/xhtml+xml');
+    if (document.querySelector('parsererror')) document = parser.parseFromString(source, 'text/html');
+    document.querySelectorAll('script,style,svg').forEach(element => element.remove());
+    const heading = document.querySelector('h1,h2,h3,title')?.textContent.trim();
+    let paragraphs = [...document.querySelectorAll('p,blockquote,li')].map(element => element.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!paragraphs.length) paragraphs = (document.body?.textContent || '').split(/\n\s*\n/).map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (paragraphs.join('').length < 20) continue;
+    chapters.push({title: heading || `Section ${chapters.length + 1}`, paragraphs});
+  }
+  if (!chapters.length) throw new Error('No readable chapters were found in this EPUB');
+  return {id:`imported-${Date.now()}`, title, author, cover:'cover-imported', progress:0, kicker:'EPUB', chapters};
+}
+
+async function importBook(file) {
+  showToast('Importing your book…');
+  let book;
+  if (/\.epub$/i.test(file.name) || file.type === 'application/epub+zip') {
+    book = await parseEpub(file);
+  } else {
+    const text = await file.text();
+    const paragraphs = text.split(/\n\s*\n/).map(value => value.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!paragraphs.length) throw new Error('This text file is empty');
+    book = {id:`imported-${Date.now()}`, title:file.name.replace(/\.txt$/i,'').replace(/[-_]/g,' '), author:'Imported text', cover:'cover-imported', progress:0, kicker:'MY BOOK', chapters:[{title:'Begin Here', paragraphs}]};
+  }
+  await saveImportedBook(book);
+  books.unshift(book);
+  renderBooks();
+  showToast(`“${book.title}” added to your library`);
+}
+
 function renderBooks(query = '') {
   const visible = books.filter(book => `${book.title} ${book.author}`.toLowerCase().includes(query.toLowerCase()));
   $('#book-grid').innerHTML = visible.map(book => `
-    <article class="book-card" data-open-book="${book.id}" tabindex="0" role="button" aria-label="Read ${book.title}">
-      <div class="book-cover ${book.cover}"><button class="cover-menu-button" data-book-menu="${book.id}" aria-label="Book options for ${book.title}" title="Book options">•••</button><span class="mini-kicker">${book.kicker}</span><strong>${book.title.toUpperCase().replace(' ', '<br>')}</strong><small>${book.author.toUpperCase()}</small></div>
-      <h3>${book.title}</h3><p>${book.author}</p>
+    <article class="book-card" data-open-book="${escapeHtml(book.id)}" tabindex="0" role="button" aria-label="Read ${escapeHtml(book.title)}">
+      <div class="book-cover ${book.cover}"><button class="cover-menu-button" data-book-menu="${escapeHtml(book.id)}" aria-label="Book options for ${escapeHtml(book.title)}" title="Book options">•••</button><span class="mini-kicker">${escapeHtml(book.kicker)}</span><strong>${escapeHtml(book.title.toUpperCase()).replace(' ', '<br>')}</strong><small>${escapeHtml(book.author.toUpperCase())}</small></div>
+      <h3>${escapeHtml(book.title)}</h3><p>${escapeHtml(book.author)}</p>
       ${book.progress ? `<div class="card-progress"><div class="progress-track"><span style="width:${book.progress}%"></span></div><span>${book.progress}%</span></div>` : ''}
     </article>`).join('');
   $('#empty-state').hidden = visible.length > 0;
@@ -140,6 +289,7 @@ function deleteBook() {
   if (!book.id.startsWith('imported-') && !deleted.includes(book.id)) deleted.push(book.id);
   localStorage.setItem('bookReaderDeleted', JSON.stringify(deleted));
   books = books.filter(item => item.id !== book.id);
+  if (book.id.startsWith('imported-')) deleteImportedBook(book.id);
   state.bookmarks = state.bookmarks.filter(mark => mark.book !== book.id);
   localStorage.setItem('bookReaderBookmarks', JSON.stringify(state.bookmarks));
   if (book.id === 'garden') $('.continue-section').hidden = true;
@@ -155,20 +305,26 @@ function getChapterParagraphs(index) {
 
 function renderChapter() {
   const book = books.find(item => item.id === state.book) || books[0];
+  if (!book) { showLibrary(); return; }
   const isGarden = book.id === 'garden';
-  const title = isGarden ? chapterNames[state.chapter] : state.chapter === 0 ? 'Begin Here' : `Part ${state.chapter + 1}`;
-  const paragraphs = getChapterParagraphs(state.chapter);
+  const chapters = book.chapters || null;
+  const totalChapters = chapters?.length || 12;
+  state.chapter = Math.max(0, Math.min(totalChapters - 1, state.chapter));
+  const importedChapter = chapters?.[state.chapter];
+  const title = importedChapter?.title || (isGarden ? chapterNames[state.chapter] : state.chapter === 0 ? 'Begin Here' : `Part ${state.chapter + 1}`);
+  const paragraphs = importedChapter?.paragraphs || getChapterParagraphs(state.chapter);
   $('#reader-title').textContent = book.title;
   $('#reader-author').textContent = book.author;
   $('#chapter-number').textContent = isGarden ? `CHAPTER ${numberWord(state.chapter + 1)}` : `SECTION ${state.chapter + 1}`;
   $('#chapter-title').textContent = title;
-  $('#chapter-deck').textContent = isGarden ? chapterDecks[state.chapter] : 'A quiet place for the next page to begin.';
-  $('#chapter-copy').innerHTML = paragraphs.map(p => `<p>${p}</p>`).join('');
+  $('#chapter-deck').textContent = importedChapter?.deck || (isGarden ? chapterDecks[state.chapter] : 'A quiet place for the next page to begin.');
+  $('#chapter-copy').innerHTML = paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('');
   $('#page-number').textContent = state.chapter + 1;
-  $('#reader-progress-bar').style.width = `${((state.chapter + 1) / 12) * 100}%`;
+  $('#reader-progress-bar').style.width = `${((state.chapter + 1) / totalChapters) * 100}%`;
   $('#prev-chapter').disabled = state.chapter === 0;
-  $('#next-chapter').disabled = state.chapter === 11;
-  $('#chapter-list').innerHTML = chapterNames.map((name, index) => `<li class="${index === state.chapter ? 'active' : ''}"><button data-chapter="${index}">${String(index + 1).padStart(2,'0')} &nbsp; ${name}</button></li>`).join('');
+  $('#next-chapter').disabled = state.chapter === totalChapters - 1;
+  const contents = chapters?.map(chapter => chapter.title) || chapterNames;
+  $('#chapter-list').innerHTML = contents.map((name, index) => `<li class="${index === state.chapter ? 'active' : ''}"><button data-chapter="${index}">${String(index + 1).padStart(2,'0')} &nbsp; ${escapeHtml(name)}</button></li>`).join('');
   $$('[data-chapter]').forEach(button => button.onclick = () => changeChapter(Number(button.dataset.chapter)));
   $('#bookmark-button').classList.toggle('active', state.bookmarks.some(mark => mark.book === state.book && mark.chapter === state.chapter));
   localStorage.setItem('bookReaderChapter', state.chapter);
@@ -198,6 +354,7 @@ function showLibrary() {
   readerView.hidden = true;
   $('.topbar').hidden = false;
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === 'library'));
+  renderBooks($('#library-search').value);
   window.scrollTo(0, 0);
 }
 
@@ -211,7 +368,11 @@ function showSaved(type) {
   $('#saved-title').textContent = type === 'bookmarks' ? 'Bookmarks' : 'Highlights';
   $('#saved-copy').textContent = type === 'bookmarks' ? 'The passages and places you want to return to.' : 'The lines that made you pause and think.';
   if (type === 'bookmarks' && state.bookmarks.length) {
-    $('#saved-content').innerHTML = state.bookmarks.map(mark => `<article class="saved-card"><p>${chapterNames[mark.chapter]}</p><small>${books.find(b => b.id === mark.book)?.title || 'Book'} · Chapter ${mark.chapter + 1}</small></article>`).join('');
+    $('#saved-content').innerHTML = state.bookmarks.map(mark => {
+      const savedBook = books.find(book => book.id === mark.book);
+      const savedChapter = savedBook?.chapters?.[mark.chapter]?.title || chapterNames[mark.chapter] || `Section ${mark.chapter + 1}`;
+      return `<article class="saved-card"><p>${escapeHtml(savedChapter)}</p><small>${escapeHtml(savedBook?.title || 'Book')} · Chapter ${mark.chapter + 1}</small></article>`;
+    }).join('');
   } else {
     $('#saved-content').innerHTML = `<div class="saved-placeholder"><strong>No ${type} yet</strong><span>${type === 'bookmarks' ? 'Tap the bookmark icon while reading to save your place.' : 'Select a memorable passage while reading to keep it here.'}</span></div>`;
   }
@@ -219,7 +380,13 @@ function showSaved(type) {
 }
 
 function changeChapter(index) {
-  state.chapter = Math.max(0, Math.min(11, index));
+  const activeBook = books.find(book => book.id === state.book);
+  const total = activeBook?.chapters?.length || 12;
+  state.chapter = Math.max(0, Math.min(total - 1, index));
+  if (activeBook?.id.startsWith('imported-')) {
+    activeBook.progress = Math.round(((state.chapter + 1) / total) * 100);
+    saveImportedBook(activeBook).catch(error => console.warn('Reading progress could not be saved', error));
+  }
   renderChapter();
   $('#chapter-panel').classList.remove('open');
   window.scrollTo({top: 0, behavior:'smooth'});
@@ -244,6 +411,7 @@ function toggleBookmark() {
 
 renderBooks();
 bindBookMenus();
+restoreImportedBooks();
 if (!books.some(book => book.id === 'garden')) $('.continue-section').hidden = true;
 if (books.find(book => book.id === 'garden')?.progress === 0) {
   $('#featured-book .progress-track span').style.width = '0%';
@@ -288,14 +456,10 @@ window.addEventListener('scroll', closeBookMenu, {passive:true});
 $('#file-input').onchange = event => {
   const file = event.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const title = file.name.replace(/\.txt$/i,'').replace(/[-_]/g,' ');
-    books.unshift({id:`imported-${Date.now()}`,title,author:'Imported text',cover:'cover-hours',progress:0,kicker:'MY BOOK'});
-    renderBooks();
-    showToast(`“${title}” added to your library`);
-  };
-  reader.readAsText(file);
+  importBook(file).catch(error => {
+    console.error(error);
+    showToast(error.message || 'This book could not be imported');
+  }).finally(() => { event.target.value = ''; });
 };
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeBookMenu();

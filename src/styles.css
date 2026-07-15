@@ -95,6 +95,8 @@ blockquote::before { content: "“"; position: absolute; top: -12px; color: var(
 .cover-hours { background: linear-gradient(135deg,transparent 48%,rgba(235,221,185,.35) 49% 50%,transparent 51%), #817b62; }
 .cover-wildwood { background: radial-gradient(ellipse at 50% 70%,#c1aa6d 0 4%,transparent 4.5%), linear-gradient(150deg,#1c372c,#4d6548); }
 .cover-letters { background: linear-gradient(20deg,transparent 56%,rgba(238,218,173,.35) 57% 58%,transparent 59%), #704e42; }
+.cover-imported { background:radial-gradient(circle at 50% 55%,rgba(228,207,150,.22) 0 18%,transparent 18.5%),linear-gradient(145deg,#4d5562,#222a35); }
+.cover-imported::before { content:"";position:absolute;inset:20% 18%;border:1px solid rgba(239,223,182,.45);transform:rotate(45deg); }
 .book-card h3 { margin: 17px 0 3px; font-family: var(--serif); font-size: 18px; font-weight: 400; }
 .book-card p { margin: 0; color: var(--muted); font-size: 11px; }
 .card-progress { display:flex; align-items:center; gap:10px; margin-top:12px; }
