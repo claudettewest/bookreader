@@ -4,6 +4,10 @@ A calm, responsive personal reading app with a library, immersive reading view, 
 
 ## Run locally
 
+On Windows, double-click `start-server.bat`.
+
+Or run:
+
 ```bash
 npm start
 ```
