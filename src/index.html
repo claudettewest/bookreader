@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f6f2ea">
+  <title>Book Reader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&family=Literata:opsz,wght@7..72,400;7..72,500;7..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <header class="topbar">
+      <button class="brand" id="home-button" aria-label="Go to library">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span>Book Reader</span>
+      </button>
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="library">Library</button>
+        <button class="nav-item" data-view="bookmarks">Bookmarks</button>
+        <button class="nav-item" data-view="highlights">Highlights</button>
+      </nav>
+      <div class="top-actions">
+        <button class="icon-button" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42M7.06 16.94l-1.42 1.42M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z"/></svg>
+        </button>
+        <button class="avatar" aria-label="Profile">CW</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="library-view" id="library-view">
+        <div class="library-hero">
+          <div>
+            <p class="eyebrow">YOUR PERSONAL LIBRARY</p>
+            <h1>Good afternoon, Claudette.</h1>
+            <p class="hero-copy">Pick up where you left off, or find something new.</p>
+          </div>
+          <button class="primary-button" id="import-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+            Import a book
+          </button>
+          <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+        </div>
+
+        <section class="continue-section" aria-labelledby="continue-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">CURRENTLY READING</p><h2 id="continue-title">Continue reading</h2></div>
+            <button class="text-button" id="view-all-button">View all <span>→</span></button>
+          </div>
+          <article class="featured-book" id="featured-book" tabindex="0" role="button" aria-label="Continue reading The Cartographer's Garden">
+            <div class="featured-cover cover-garden">
+              <span class="cover-kicker">A NOVEL</span>
+              <strong>THE<br>CARTOGRAPHER'S<br>GARDEN</strong>
+              <i></i>
+              <small>ELENA VALE</small>
+            </div>
+            <div class="featured-info">
+              <span class="status-pill">IN PROGRESS</span>
+              <h3>The Cartographer's Garden</h3>
+              <p class="author">Elena Vale</p>
+              <p class="description">In a city where maps remember what people forget, a young apprentice discovers a garden that exists only at the edges of unfinished stories.</p>
+              <div class="progress-row"><span>Chapter 4 of 12</span><strong>34%</strong></div>
+              <div class="progress-track"><span style="width:34%"></span></div>
+              <p class="last-read">Last read today · 18 min left in chapter</p>
+              <button class="read-button" data-open-book="garden">Continue reading <span>→</span></button>
+            </div>
+            <blockquote>“Every map is a promise about what waits beyond the fold.”</blockquote>
+          </article>
+        </section>
+
+        <section class="collection-section" id="collection-section" aria-labelledby="collection-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">ON YOUR SHELF</p><h2 id="collection-title">Your collection</h2></div>
+            <label class="search-box">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="library-search" type="search" placeholder="Search your books" aria-label="Search your books">
+            </label>
+          </div>
+          <div class="book-grid" id="book-grid"></div>
+          <div class="empty-state" id="empty-state" hidden><span>⌕</span><h3>No books found</h3><p>Try another title or author.</p></div>
+        </section>
+      </section>
+
+      <section class="saved-view" id="saved-view" hidden>
+        <div class="saved-header"><p class="eyebrow" id="saved-eyebrow">YOUR READING NOTES</p><h1 id="saved-title">Bookmarks</h1><p id="saved-copy">The passages and places you want to return to.</p></div>
+        <div id="saved-content" class="saved-content"></div>
+      </section>
+
+      <section class="reader-view" id="reader-view" hidden>
+        <header class="reader-header">
+          <button class="reader-back" id="reader-back" aria-label="Back to library"><span>←</span> Library</button>
+          <div class="reader-book-title"><strong id="reader-title">The Cartographer's Garden</strong><span id="reader-author">Elena Vale</span></div>
+          <div class="reader-actions">
+            <button class="reader-icon" id="reader-search-button" aria-label="Search in book"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></button>
+            <button class="reader-icon" id="bookmark-button" aria-label="Bookmark chapter"><svg viewBox="0 0 24 24"><path d="M7 4.5A1.5 1.5 0 0 1 8.5 3h7A1.5 1.5 0 0 1 17 4.5V21l-5-3-5 3Z"></path></svg></button>
+            <button class="reader-icon type-button" id="type-button" aria-label="Reading settings">Aa</button>
+          </div>
+        </header>
+        <div class="reader-progress"><span id="reader-progress-bar"></span></div>
+        <aside class="chapter-panel" id="chapter-panel">
+          <p class="eyebrow">CONTENTS</p>
+          <h3>Chapters</h3>
+          <ol id="chapter-list"></ol>
+        </aside>
+        <aside class="settings-panel" id="settings-panel" hidden>
+          <div><span>Text size</span><div class="setting-controls"><button id="font-down">A−</button><strong id="font-value">18</strong><button id="font-up">A+</button></div></div>
+          <div><span>Page tone</span><div class="tone-options"><button class="tone active" data-tone="paper" aria-label="Paper"></button><button class="tone sepia" data-tone="sepia" aria-label="Sepia"></button><button class="tone ink" data-tone="ink" aria-label="Dark"></button></div></div>
+          <div><span>Width</span><input id="width-slider" type="range" min="560" max="850" value="680"></div>
+        </aside>
+        <div class="book-search" id="book-search" hidden><input id="book-search-input" type="search" placeholder="Search this chapter…"><button id="close-book-search">×</button><p id="search-result"></p></div>
+        <button class="contents-toggle" id="contents-toggle" aria-label="Toggle contents"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"></path></svg></button>
+        <article class="reading-page" id="reading-page">
+          <p class="chapter-number" id="chapter-number">CHAPTER FOUR</p>
+          <h1 id="chapter-title">The Map That Remembered Rain</h1>
+          <p class="chapter-deck" id="chapter-deck">Some places are easier to find after they have disappeared.</p>
+          <div class="ornament"><span></span>✦<span></span></div>
+          <div class="chapter-copy" id="chapter-copy"></div>
+          <footer class="chapter-footer">
+            <button id="prev-chapter">← <span>Previous chapter</span></button>
+            <span id="page-number">4</span>
+            <button id="next-chapter"><span>Next chapter</span> →</button>
+          </footer>
+        </article>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
