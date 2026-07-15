@@ -52,6 +52,7 @@
           </div>
           <article class="featured-book" id="featured-book" tabindex="0" role="button" aria-label="Continue reading The Cartographer's Garden">
             <div class="featured-cover cover-garden">
+              <button class="cover-menu-button" data-book-menu="garden" aria-label="Book options for The Cartographer's Garden" title="Book options">•••</button>
               <span class="cover-kicker">A NOVEL</span>
               <strong>THE<br>CARTOGRAPHER'S<br>GARDEN</strong>
               <i></i>
@@ -126,6 +127,10 @@
         </article>
       </section>
     </main>
+    <div class="book-menu" id="book-menu" hidden>
+      <button id="reset-bookmark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5A1.5 1.5 0 0 1 8.5 3h7A1.5 1.5 0 0 1 17 4.5V21l-5-3-5 3Z"></path><path d="M4 9a8 8 0 0 1 14-3M20 4v4h-4"></path></svg>Reset bookmark</button>
+      <button class="danger" id="delete-book"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"></path></svg>Delete book</button>
+    </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="app.js"></script>

@@ -1,10 +1,12 @@
-const books = [
+const resetBooks = JSON.parse(localStorage.getItem('bookReaderReset') || '[]');
+let books = [
   { id:'garden', title:"The Cartographer's Garden", author:'Elena Vale', cover:'cover-garden', progress:34, kicker:'A NOVEL' },
   { id:'sea', title:'Salt Between Stars', author:'Mara Lin', cover:'cover-sea', progress:72, kicker:'A VOYAGE' },
   { id:'hours', title:'The Quiet Hours', author:'Theo Maren', cover:'cover-hours', progress:0, kicker:'ESSAYS' },
   { id:'wildwood', title:'Wildwood Almanac', author:'Iris North', cover:'cover-wildwood', progress:18, kicker:'FIELD NOTES' },
   { id:'letters', title:'Letters to the Moon', author:'Ana Sol', cover:'cover-letters', progress:100, kicker:'POEMS' }
-];
+].map(book => resetBooks.includes(book.id) ? {...book, progress:0} : book)
+  .filter(book => !JSON.parse(localStorage.getItem('bookReaderDeleted') || '[]').includes(book.id));
 
 const chapterNames = ['The Brass Compass','A Street Without a Name','The Greenhouse Door','The Map That Remembered Rain','Ink in the Well','The Orchard at Dusk','North of Yesterday','A Country of Small Things','The River in the Margin','What the Atlas Hid','The Last Fold','Home, Drawn by Hand'];
 const chapterDecks = [
@@ -38,7 +40,8 @@ const state = {
   fontSize: Number(localStorage.getItem('bookReaderFontSize')) || 18,
   width: Number(localStorage.getItem('bookReaderWidth')) || 680,
   tone: localStorage.getItem('bookReaderTone') || 'paper',
-  bookmarks: JSON.parse(localStorage.getItem('bookReaderBookmarks') || '[]')
+  bookmarks: JSON.parse(localStorage.getItem('bookReaderBookmarks') || '[]'),
+  menuBookId: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -59,12 +62,13 @@ function renderBooks(query = '') {
   const visible = books.filter(book => `${book.title} ${book.author}`.toLowerCase().includes(query.toLowerCase()));
   $('#book-grid').innerHTML = visible.map(book => `
     <article class="book-card" data-open-book="${book.id}" tabindex="0" role="button" aria-label="Read ${book.title}">
-      <div class="book-cover ${book.cover}"><span class="mini-kicker">${book.kicker}</span><strong>${book.title.toUpperCase().replace(' ', '<br>')}</strong><small>${book.author.toUpperCase()}</small></div>
+      <div class="book-cover ${book.cover}"><button class="cover-menu-button" data-book-menu="${book.id}" aria-label="Book options for ${book.title}" title="Book options">•••</button><span class="mini-kicker">${book.kicker}</span><strong>${book.title.toUpperCase().replace(' ', '<br>')}</strong><small>${book.author.toUpperCase()}</small></div>
       <h3>${book.title}</h3><p>${book.author}</p>
       ${book.progress ? `<div class="card-progress"><div class="progress-track"><span style="width:${book.progress}%"></span></div><span>${book.progress}%</span></div>` : ''}
     </article>`).join('');
   $('#empty-state').hidden = visible.length > 0;
   bindBookCards();
+  bindBookMenus();
 }
 
 function bindBookCards() {
@@ -72,6 +76,76 @@ function bindBookCards() {
     element.onclick = event => { event.stopPropagation(); openReader(element.dataset.openBook); };
     element.onkeydown = event => { if (event.key === 'Enter') openReader(element.dataset.openBook); };
   });
+}
+
+function bindBookMenus() {
+  $$('[data-book-menu]').forEach(button => {
+    button.onclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openBookMenu(button, button.dataset.bookMenu);
+    };
+  });
+}
+
+function openBookMenu(button, bookId) {
+  const menu = $('#book-menu');
+  const wasOpen = !menu.hidden && state.menuBookId === bookId;
+  closeBookMenu();
+  if (wasOpen) return;
+  state.menuBookId = bookId;
+  menu.hidden = false;
+  button.setAttribute('aria-expanded', 'true');
+  const rect = button.getBoundingClientRect();
+  const menuWidth = 184;
+  const left = Math.min(window.innerWidth - menuWidth - 10, Math.max(10, rect.right - menuWidth));
+  const top = Math.min(window.innerHeight - 105, rect.bottom + 7);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeBookMenu() {
+  $('#book-menu').hidden = true;
+  $$('[data-book-menu]').forEach(button => button.removeAttribute('aria-expanded'));
+  state.menuBookId = null;
+}
+
+function resetBookmarkForBook() {
+  const book = books.find(item => item.id === state.menuBookId);
+  if (!book) return;
+  book.progress = 0;
+  const reset = JSON.parse(localStorage.getItem('bookReaderReset') || '[]');
+  if (!reset.includes(book.id)) reset.push(book.id);
+  localStorage.setItem('bookReaderReset', JSON.stringify(reset));
+  state.bookmarks = state.bookmarks.filter(mark => mark.book !== book.id);
+  if (book.id === 'garden') {
+    state.chapter = 0;
+    localStorage.setItem('bookReaderChapter', '0');
+    const featuredProgress = $('#featured-book .progress-track span');
+    if (featuredProgress) featuredProgress.style.width = '0%';
+    const featuredPercent = $('#featured-book .progress-row strong');
+    if (featuredPercent) featuredPercent.textContent = '0%';
+  }
+  localStorage.setItem('bookReaderBookmarks', JSON.stringify(state.bookmarks));
+  const title = book.title;
+  closeBookMenu();
+  renderBooks($('#library-search').value);
+  showToast(`Bookmark reset for “${title}”`);
+}
+
+function deleteBook() {
+  const book = books.find(item => item.id === state.menuBookId);
+  if (!book) return;
+  const deleted = JSON.parse(localStorage.getItem('bookReaderDeleted') || '[]');
+  if (!book.id.startsWith('imported-') && !deleted.includes(book.id)) deleted.push(book.id);
+  localStorage.setItem('bookReaderDeleted', JSON.stringify(deleted));
+  books = books.filter(item => item.id !== book.id);
+  state.bookmarks = state.bookmarks.filter(mark => mark.book !== book.id);
+  localStorage.setItem('bookReaderBookmarks', JSON.stringify(state.bookmarks));
+  if (book.id === 'garden') $('.continue-section').hidden = true;
+  closeBookMenu();
+  renderBooks($('#library-search').value);
+  showToast(`“${book.title}” deleted`);
 }
 
 function getChapterParagraphs(index) {
@@ -169,6 +243,12 @@ function toggleBookmark() {
 }
 
 renderBooks();
+bindBookMenus();
+if (!books.some(book => book.id === 'garden')) $('.continue-section').hidden = true;
+if (books.find(book => book.id === 'garden')?.progress === 0) {
+  $('#featured-book .progress-track span').style.width = '0%';
+  $('#featured-book .progress-row strong').textContent = '0%';
+}
 applyReaderSettings();
 $('#featured-book').onclick = () => openReader('garden');
 $('#reader-back').onclick = showLibrary;
@@ -200,6 +280,11 @@ $('#book-search-input').oninput = event => {
   $('#search-result').textContent = `${count} match${count === 1 ? '' : 'es'} in this chapter`;
 };
 $('#import-button').onclick = () => $('#file-input').click();
+$('#reset-bookmark').onclick = event => { event.stopPropagation(); resetBookmarkForBook(); };
+$('#delete-book').onclick = event => { event.stopPropagation(); deleteBook(); };
+document.addEventListener('click', event => { if (!event.target.closest('#book-menu') && !event.target.closest('[data-book-menu]')) closeBookMenu(); });
+window.addEventListener('resize', closeBookMenu);
+window.addEventListener('scroll', closeBookMenu, {passive:true});
 $('#file-input').onchange = event => {
   const file = event.target.files[0];
   if (!file) return;
@@ -213,6 +298,7 @@ $('#file-input').onchange = event => {
   reader.readAsText(file);
 };
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeBookMenu();
   if (state.view !== 'reader') return;
   if (event.key === 'ArrowRight') changeChapter(state.chapter + 1);
   if (event.key === 'ArrowLeft') changeChapter(state.chapter - 1);
