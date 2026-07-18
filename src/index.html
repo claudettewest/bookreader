@@ -27,11 +27,23 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42M7.06 16.94l-1.42 1.42M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z"/></svg>
         </button>
         <button class="avatar" aria-label="Profile">CW</button>
+        <a class="app-close" href="http://100.127.36.5:3411/" aria-label="Close Book Reader and return to the main app" title="Close Book Reader">&times;</a>
       </div>
     </header>
 
     <main>
-      <section class="library-view" id="library-view">
+      <section class="library-view" id="library-view" aria-busy="true">
+        <div class="library-loader" id="library-loader" role="status" aria-live="polite">
+          <div class="loading-book" aria-hidden="true">
+            <span class="loading-book-cover left"></span>
+            <span class="loading-book-cover right"></span>
+            <i class="loading-page page-one"></i>
+            <i class="loading-page page-two"></i>
+            <i class="loading-page page-three"></i>
+          </div>
+          <strong>Opening your library</strong>
+          <span>Bringing your books back to the shelf…</span>
+        </div>
         <div class="library-hero">
           <div>
             <p class="eyebrow">YOUR PERSONAL LIBRARY</p>
@@ -99,6 +111,7 @@
             <button class="reader-icon" id="tts-button" aria-label="Listen to this chapter" title="Listen"><svg viewBox="0 0 24 24"><path d="M5 10v4h3l4 3V7l-4 3H5Z"></path><path d="M16 9a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12"></path></svg></button>
             <button class="reader-icon" id="bookmark-button" aria-label="Bookmark chapter"><svg viewBox="0 0 24 24"><path d="M7 4.5A1.5 1.5 0 0 1 8.5 3h7A1.5 1.5 0 0 1 17 4.5V21l-5-3-5 3Z"></path></svg></button>
             <button class="reader-icon type-button" id="type-button" aria-label="Reading settings">Aa</button>
+            <a class="app-close reader-close" href="http://100.127.36.5:3411/" aria-label="Close Book Reader and return to the main app" title="Close Book Reader">&times;</a>
           </div>
         </header>
         <div class="reader-progress"><span id="reader-progress-bar"></span></div>

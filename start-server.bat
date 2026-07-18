@@ -11,7 +11,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting Book Reader at http://localhost:3511
+echo Starting Book Reader at http://100.127.36.5:3511
+echo Local access is available at http://localhost:3511
 echo Press Ctrl+C to stop the server.
 echo.
 

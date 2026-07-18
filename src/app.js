@@ -182,6 +182,14 @@ function openBookDatabase() {
 }
 
 async function saveImportedBook(book) {
+  const response = await fetch('/api/books', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(book)
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Book could not be saved');
+
+  // Keep a browser copy so previously imported libraries continue to work offline.
   const database = await openBookDatabase();
   await new Promise((resolve, reject) => {
     const transaction = database.transaction('books', 'readwrite');
@@ -193,6 +201,9 @@ async function saveImportedBook(book) {
 }
 
 async function deleteImportedBook(id) {
+  fetch(`/api/books/${encodeURIComponent(id)}`, {method:'DELETE'}).catch(error => {
+    console.warn('Imported book could not be deleted from the server', error);
+  });
   const database = await openBookDatabase();
   const transaction = database.transaction('books', 'readwrite');
   transaction.objectStore('books').delete(id);
@@ -200,20 +211,52 @@ async function deleteImportedBook(id) {
 }
 
 async function restoreImportedBooks() {
+  const loadingStarted = performance.now();
+  let imported = [];
+  let serverAvailable = false;
+  try {
+    const response = await fetch('/api/books?summary=1');
+    if (!response.ok) throw new Error('Saved books could not be loaded');
+    imported = await response.json();
+    serverAvailable = true;
+  } catch (error) {
+    console.warn('Server library could not be restored; trying browser storage', error);
+  }
+
   try {
     const database = await openBookDatabase();
-    const imported = await new Promise((resolve, reject) => {
+    const browserBooks = await new Promise((resolve, reject) => {
       const request = database.transaction('books').objectStore('books').getAll();
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
     database.close();
+    const importedIds = new Set(imported.map(book => book.id));
+    const browserOnly = browserBooks.filter(book => !importedIds.has(book.id));
+    imported.push(...browserOnly);
+    if (serverAvailable) {
+      browserOnly.forEach(book => fetch('/api/books', {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(book)
+      }).catch(error => console.warn('Existing book could not be migrated to server storage', error)));
+    }
+  } catch (error) {
+    console.warn('Browser library could not be restored', error);
+  }
+
+  try {
     const known = new Set(books.map(book => book.id));
     books.push(...imported.filter(book => !known.has(book.id)));
     renderBooks($('#library-search').value);
   } catch (error) {
-    console.warn('Imported books could not be restored', error);
+    console.warn('Imported library could not be rendered', error);
   }
+
+  const loader = $('#library-loader');
+  const minimumDisplayTime = 650;
+  setTimeout(() => {
+    loader.hidden = true;
+    libraryView.setAttribute('aria-busy', 'false');
+  }, Math.max(0, minimumDisplayTime - (performance.now() - loadingStarted)));
 }
 
 function normalizeArchivePath(path) {
@@ -270,6 +313,20 @@ function xmlElements(document, localName) {
   return [...document.getElementsByTagNameNS('*', localName)];
 }
 
+function resourceMimeType(path, declaredType = '') {
+  if (declaredType.startsWith('image/')) return declaredType;
+  const extension = path.split('.').pop().toLowerCase();
+  return ({jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',svg:'image/svg+xml',avif:'image/avif'}[extension] || 'application/octet-stream');
+}
+
+function bytesToDataUrl(bytes, mimeType) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
 async function parseEpub(file) {
   const archive = createZipReader(await file.arrayBuffer());
   const decoder = new TextDecoder();
@@ -281,8 +338,28 @@ async function parseEpub(file) {
   const title = xmlElements(packageDocument, 'title')[0]?.textContent.trim() || file.name.replace(/\.epub$/i, '');
   const author = xmlElements(packageDocument, 'creator')[0]?.textContent.trim() || 'Unknown author';
   const basePath = packagePath.includes('/') ? packagePath.slice(0, packagePath.lastIndexOf('/') + 1) : '';
-  const manifest = new Map(xmlElements(packageDocument, 'item').map(item => [item.getAttribute('id'), item.getAttribute('href')]));
+  const manifestItems = xmlElements(packageDocument, 'item').map(item => ({
+    id:item.getAttribute('id'), href:item.getAttribute('href'), type:item.getAttribute('media-type') || '', properties:item.getAttribute('properties') || ''
+  }));
+  const manifest = new Map(manifestItems.map(item => [item.id, item.href]));
+  const manifestByPath = new Map(manifestItems.map(item => [normalizeArchivePath(basePath + item.href.split('#')[0]), item]));
   const spine = xmlElements(packageDocument, 'itemref').map(item => item.getAttribute('idref'));
+  const imageCache = new Map();
+  async function readImage(path) {
+    const normalizedPath = normalizeArchivePath(path);
+    if (!archive.has(normalizedPath)) return null;
+    if (!imageCache.has(normalizedPath)) {
+      const mimeType = resourceMimeType(normalizedPath, manifestByPath.get(normalizedPath)?.type || '');
+      if (!mimeType.startsWith('image/')) return null;
+      imageCache.set(normalizedPath, bytesToDataUrl(await archive.read(normalizedPath), mimeType));
+    }
+    return imageCache.get(normalizedPath);
+  }
+  const legacyCoverId = xmlElements(packageDocument, 'meta').find(meta => meta.getAttribute('name')?.toLowerCase() === 'cover')?.getAttribute('content');
+  const coverItem = manifestItems.find(item => item.properties.split(/\s+/).includes('cover-image'))
+    || manifestItems.find(item => item.id === legacyCoverId)
+    || manifestItems.find(item => item.type.startsWith('image/') && /(^|[\/_-])cover([._-]|$)/i.test(item.href));
+  const coverImage = coverItem ? await readImage(basePath + coverItem.href.split('#')[0]) : null;
   const chapters = [];
   for (const id of spine) {
     const href = manifest.get(id);
@@ -292,15 +369,31 @@ async function parseEpub(file) {
     const source = decoder.decode(await archive.read(resourcePath));
     let document = parser.parseFromString(source, 'application/xhtml+xml');
     if (document.querySelector('parsererror')) document = parser.parseFromString(source, 'text/html');
-    document.querySelectorAll('script,style,svg').forEach(element => element.remove());
+    document.querySelectorAll('script,style').forEach(element => element.remove());
     const heading = document.querySelector('h1,h2,h3,title')?.textContent.trim();
-    let paragraphs = [...document.querySelectorAll('p,blockquote,li')].map(element => element.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    if (!paragraphs.length) paragraphs = (document.body?.textContent || '').split(/\n\s*\n/).map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    if (paragraphs.join('').length < 20) continue;
-    chapters.push({title: heading || `Section ${chapters.length + 1}`, paragraphs});
+    const resourceBase = resourcePath.includes('/') ? resourcePath.slice(0, resourcePath.lastIndexOf('/') + 1) : '';
+    const blocks = [];
+    for (const element of document.querySelectorAll('p,blockquote,li,img,svg image')) {
+      if (element.matches('p,blockquote,li')) {
+        const text = element.textContent.replace(/\s+/g, ' ').trim();
+        if (text) blocks.push({type:'text', text});
+        continue;
+      }
+      const source = element.getAttribute('src') || element.getAttribute('href') || element.getAttribute('xlink:href');
+      if (!source || /^(data:|https?:|blob:)/i.test(source)) continue;
+      const image = await readImage(resourceBase + source.split('#')[0].split('?')[0]);
+      if (image) blocks.push({type:'image', src:image, alt:element.getAttribute('alt') || ''});
+    }
+    let paragraphs = blocks.filter(block => block.type === 'text').map(block => block.text);
+    if (!paragraphs.length) {
+      paragraphs = (document.body?.textContent || '').split(/\n\s*\n/).map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      blocks.unshift(...paragraphs.map(text => ({type:'text', text})));
+    }
+    if (paragraphs.join('').length < 20 && !blocks.some(block => block.type === 'image')) continue;
+    chapters.push({title: heading || `Section ${chapters.length + 1}`, paragraphs, blocks});
   }
   if (!chapters.length) throw new Error('No readable chapters were found in this EPUB');
-  return {id:`imported-${Date.now()}`, title, author, cover:'cover-imported', progress:0, kicker:'EPUB', chapters};
+  return {id:`imported-${Date.now()}`, title, author, cover:'cover-imported', coverImage, progress:0, kicker:'EPUB', chapters};
 }
 
 async function importBook(file) {
@@ -324,7 +417,7 @@ function renderBooks(query = '') {
   const visible = books.filter(book => `${book.title} ${book.author}`.toLowerCase().includes(query.toLowerCase()));
   $('#book-grid').innerHTML = visible.map(book => `
     <article class="book-card" data-open-book="${escapeHtml(book.id)}" tabindex="0" role="button" aria-label="Read ${escapeHtml(book.title)}">
-      <div class="book-cover ${book.cover}"><button class="cover-menu-button" data-book-menu="${escapeHtml(book.id)}" aria-label="Book options for ${escapeHtml(book.title)}" title="Book options">•••</button><span class="mini-kicker">${escapeHtml(book.kicker)}</span><strong>${escapeHtml(book.title.toUpperCase()).replace(' ', '<br>')}</strong><small>${escapeHtml(book.author.toUpperCase())}</small></div>
+      <div class="book-cover ${book.cover} ${book.coverImage ? 'has-cover-image' : ''}">${book.coverImage ? `<img class="imported-cover-image" src="${escapeHtml(book.coverImage)}" alt="Cover of ${escapeHtml(book.title)}">` : ''}<button class="cover-menu-button" data-book-menu="${escapeHtml(book.id)}" aria-label="Book options for ${escapeHtml(book.title)}" title="Book options">•••</button>${book.coverImage ? '' : `<span class="mini-kicker">${escapeHtml(book.kicker)}</span><strong>${escapeHtml(book.title.toUpperCase()).replace(' ', '<br>')}</strong><small>${escapeHtml(book.author.toUpperCase())}</small>`}</div>
       <h3>${escapeHtml(book.title)}</h3><p>${escapeHtml(book.author)}</p>
       ${book.progress ? `<div class="card-progress"><div class="progress-track"><span style="width:${book.progress}%"></span></div><span>${book.progress}%</span></div>` : ''}
     </article>`).join('');
@@ -431,7 +524,11 @@ function renderChapter() {
   $('#chapter-number').textContent = isGarden ? `CHAPTER ${numberWord(state.chapter + 1)}` : `SECTION ${state.chapter + 1}`;
   $('#chapter-title').textContent = title;
   $('#chapter-deck').textContent = importedChapter?.deck || (isGarden ? chapterDecks[state.chapter] : 'A quiet place for the next page to begin.');
-  $('#chapter-copy').innerHTML = paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('');
+  $('#chapter-copy').innerHTML = importedChapter?.blocks?.length
+    ? importedChapter.blocks.map(block => block.type === 'image'
+      ? `<figure class="epub-image"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt)}"></figure>`
+      : `<p>${escapeHtml(block.text)}</p>`).join('')
+    : paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('');
   $('#page-number').textContent = state.chapter + 1;
   $('#reader-progress-bar').style.width = `${((state.chapter + 1) / totalChapters) * 100}%`;
   $('#prev-chapter').disabled = state.chapter === 0;
@@ -447,9 +544,40 @@ function numberWord(number) {
   return ['ONE','TWO','THREE','FOUR','FIVE','SIX','SEVEN','EIGHT','NINE','TEN','ELEVEN','TWELVE'][number - 1];
 }
 
-function openReader(bookId) {
+async function loadImportedBook(book) {
+  try {
+    const response = await fetch(`/api/books/${encodeURIComponent(book.id)}`);
+    if (!response.ok) throw new Error('Saved book could not be loaded');
+    Object.assign(book, await response.json(), {serverStored:true});
+    return true;
+  } catch (serverError) {
+    try {
+      const database = await openBookDatabase();
+      const browserBook = await new Promise((resolve, reject) => {
+        const request = database.transaction('books').objectStore('books').get(book.id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      database.close();
+      if (!browserBook) throw serverError;
+      Object.assign(book, browserBook);
+      return true;
+    } catch (error) {
+      console.error('Imported book could not be opened', error);
+      showToast('This saved book could not be loaded');
+      return false;
+    }
+  }
+}
+
+async function openReader(bookId) {
   stopSpeech();
   $('#speech-panel').hidden = true;
+  const selectedBook = books.find(book => book.id === bookId);
+  if (selectedBook?.serverStored && !selectedBook.chapters) {
+    showToast(`Opening “${selectedBook.title}”…`);
+    if (!await loadImportedBook(selectedBook)) return;
+  }
   state.book = bookId;
   if (bookId !== 'garden') state.chapter = 0;
   state.view = 'reader';

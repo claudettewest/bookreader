@@ -12,6 +12,6 @@ Or run:
 npm start
 ```
 
-Open [http://localhost:3511](http://localhost:3511).
+Open [http://100.127.36.5:3511](http://100.127.36.5:3511) from a connected remote device, or [http://localhost:3511](http://localhost:3511) on this computer.
 
 No package installation is required; the server uses Node.js built-in modules.
