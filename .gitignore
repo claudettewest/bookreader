@@ -4,6 +4,7 @@
 /.idea/
 **/build/
 /captures/
+/emulator/
 .externalNativeBuild/
 .cxx/
 *.jks

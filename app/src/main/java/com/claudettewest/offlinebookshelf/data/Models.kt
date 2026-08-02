@@ -46,6 +46,7 @@ data class PreferenceEntity(@PrimaryKey val key: String, val value: String)
 
 @Dao
 interface LibraryDao {
+    @Query("SELECT COUNT(*) FROM books") suspend fun bookCount(): Int
     @Query("SELECT * FROM books ORDER BY lastOpenedAt DESC, dateAdded DESC") fun observeBooks(): Flow<List<BookEntity>>
     @Query("SELECT * FROM books WHERE id=:id") fun observeBook(id: String): Flow<BookEntity?>
     @Query("SELECT * FROM books WHERE id=:id") suspend fun book(id: String): BookEntity?
@@ -53,6 +54,13 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertBook(book: BookEntity)
     @Update suspend fun updateBook(book: BookEntity)
     @Delete suspend fun deleteBook(book: BookEntity)
+    @Query("DELETE FROM chapters WHERE bookId=:bookId") suspend fun deleteChapters(bookId: String)
+    @Query("DELETE FROM positions WHERE bookId=:bookId") suspend fun deleteReadingPosition(bookId: String)
+    @Query("DELETE FROM tts_positions WHERE bookId=:bookId") suspend fun deleteTtsPosition(bookId: String)
+    @Query("DELETE FROM bookmarks WHERE bookId=:bookId") suspend fun deleteBookmarks(bookId: String)
+    @Transaction suspend fun deleteBookData(book: BookEntity) {
+        deleteBookmarks(book.id); deleteTtsPosition(book.id); deleteReadingPosition(book.id); deleteChapters(book.id); deleteBook(book)
+    }
     @Query("SELECT * FROM chapters WHERE bookId=:bookId ORDER BY ordinal") fun observeChapters(bookId: String): Flow<List<ChapterEntity>>
     @Query("SELECT * FROM chapters WHERE bookId=:bookId ORDER BY ordinal") suspend fun chapters(bookId: String): List<ChapterEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertChapters(chapters: List<ChapterEntity>)

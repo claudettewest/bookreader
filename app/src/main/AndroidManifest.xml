@@ -2,13 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <application android:name=".BookshelfApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="false" android:icon="@drawable/ic_launcher" android:label="Offline Bookshelf" android:theme="@style/Theme.OfflineBookshelf" android:usesCleartextTraffic="false">
-        <activity android:name=".MainActivity" android:exported="true">
+    <application android:name=".BookshelfApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="false" android:icon="@drawable/app_icon" android:roundIcon="@drawable/app_icon" android:label="Read Aloud Library" android:theme="@style/Theme.OfflineBookshelf" android:usesCleartextTraffic="false">
+        <activity android:name=".SplashActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".MainActivity" android:exported="false" />
         <service android:name=".tts.TtsPlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

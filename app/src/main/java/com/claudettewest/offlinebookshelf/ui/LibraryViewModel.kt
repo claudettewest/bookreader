@@ -23,5 +23,10 @@ class LibraryViewModel(private val dao: LibraryDao, private val importer: BookIm
     fun sort(value: SortMode) { controls.update { it.copy(sort = value) } }
     fun import(uris: List<Uri>) = viewModelScope.launch { controls.update { it.copy(importing = true) }; val results = uris.map { importer.import(it) }; val failures = results.filter { it.error != null }; controls.update { it.copy(importing = false, message = if (failures.isEmpty()) "Imported ${results.size} book${if(results.size == 1) "" else "s"}." else "Imported ${results.size - failures.size}; ${failures.size} could not be imported: ${failures.joinToString { it.sourceName }}") } }
     fun clearMessage() { controls.update { it.copy(message = null) } }
+    fun delete(book: BookEntity) = viewModelScope.launch {
+        runCatching { importer.delete(book) }
+            .onSuccess { controls.update { it.copy(message = "Removed ${book.title} from your library.") } }
+            .onFailure { controls.update { it.copy(message = "The book could not be removed.") } }
+    }
     companion object { fun factory(dao: LibraryDao, importer: BookImporter) = viewModelFactory { initializer { LibraryViewModel(dao, importer) } } }
 }

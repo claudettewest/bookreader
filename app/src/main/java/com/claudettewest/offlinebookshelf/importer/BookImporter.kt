@@ -3,6 +3,8 @@ package com.claudettewest.offlinebookshelf.importer
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import com.claudettewest.offlinebookshelf.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,10 +37,18 @@ class BookImporter(private val context: Context, private val dao: LibraryDao) {
                 BookFormat.TXT, BookFormat.MARKDOWN, BookFormat.HTML, BookFormat.RTF, BookFormat.FB2 -> TextParser().parse(original, root, id, format)
                 BookFormat.PDF -> ParsedBook(name.substringBeforeLast('.'), "Unknown author", emptyList(), null, false)
             }
-            val book = BookEntity(id, parsed.title.ifBlank { name.substringBeforeLast('.') }, parsed.author.ifBlank { "Unknown author" }, format = format, sourceUri = uri.toString(), sourceName = name, privatePath = original.absolutePath, coverPath = parsed.coverPath, contentHash = hash, fileSize = original.length(), chapterCount = parsed.chapters.size, searchable = format != BookFormat.PDF || parsed.searchable, ttsAvailable = format != BookFormat.PDF || parsed.searchable)
+            val pageCount = if (format == BookFormat.PDF) ParcelFileDescriptor.open(original, ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> PdfRenderer(fd).use { it.pageCount } } else parsed.chapters.size
+            val book = BookEntity(id, parsed.title.ifBlank { name.substringBeforeLast('.') }, parsed.author.ifBlank { "Unknown author" }, format = format, sourceUri = uri.toString(), sourceName = name, privatePath = original.absolutePath, coverPath = parsed.coverPath, contentHash = hash, fileSize = original.length(), chapterCount = pageCount, searchable = format != BookFormat.PDF || parsed.searchable, ttsAvailable = format != BookFormat.PDF || parsed.searchable)
             dao.insertBook(book); dao.insertChapters(parsed.chapters)
             ImportResult(name, id)
         }.getOrElse { rootCause -> ImportResult(name, error = rootCause.message ?: "The book could not be imported.") }
+    }
+
+    suspend fun delete(book: BookEntity) = withContext(Dispatchers.IO) {
+        dao.deleteBookData(book)
+        val booksRoot = File(context.filesDir, "books").canonicalFile
+        val bookRoot = File(book.privatePath).canonicalFile.parentFile?.parentFile
+        if (bookRoot != null && bookRoot.parentFile == booksRoot) bookRoot.deleteRecursively()
     }
 
     private fun formatFor(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
