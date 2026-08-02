@@ -5,6 +5,8 @@
 **/build/
 /captures/
 /emulator/
+/release-signing/
+/releases/
 .externalNativeBuild/
 .cxx/
 *.jks

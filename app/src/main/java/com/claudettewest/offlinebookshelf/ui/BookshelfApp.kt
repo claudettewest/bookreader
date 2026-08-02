@@ -30,6 +30,7 @@ import com.claudettewest.offlinebookshelf.data.BookEntity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 import com.claudettewest.offlinebookshelf.tts.TtsVoicePreferences
 
 @Composable fun BookshelfApp(vm: LibraryViewModel) {
@@ -155,7 +156,7 @@ import com.claudettewest.offlinebookshelf.tts.TtsVoicePreferences
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text("Choose TTS voice", Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.titleLarge)
         Text("The app automatically chooses Hindi unless you select a specific voice.", Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-        Text("Speech speed: ${String.format(Locale.getDefault(), "%.1fx", speed)}", Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+        Text("Speech speed: ${(speed * 10).roundToInt() / 10f}x", Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
         Slider(speed, { speed = it; TtsVoicePreferences.setSpeechRate(context, it) }, Modifier.padding(horizontal = 24.dp), valueRange = 0.5f..2f, steps = 5)
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 600.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
             item { ListItem(headlineContent = { Text("Automatic language voice") }, supportingContent = { Text("Recommended") }, leadingContent = { RadioButton(selected == null, { selected = null; TtsVoicePreferences.selectVoice(context, null) }) }, modifier = Modifier.clickable { selected = null; TtsVoicePreferences.selectVoice(context, null) }) }
@@ -182,7 +183,7 @@ import com.claudettewest.offlinebookshelf.tts.TtsVoicePreferences
                 "Default reader settings" -> {
                     Text("Default text size: ${fontSize.toInt()}")
                     Slider(fontSize, { fontSize = it; readerPrefs.edit().putFloat("font_size", it).apply() }, valueRange = 14f..44f)
-                    Text("Default line spacing: ${String.format(Locale.getDefault(), "%.1f", spacing)}")
+                    Text("Default line spacing: ${(spacing * 10).roundToInt() / 10f}")
                     Slider(spacing, { spacing = it; readerPrefs.edit().putFloat("line_spacing", it).apply() }, valueRange = 1.1f..2.1f)
                     Text("These defaults are applied when a reader is opened.")
                 }

@@ -1,2 +1,3 @@
 -keep class org.jsoup.** { *; }
 -dontwarn org.apache.pdfbox.**
+-dontwarn com.gemalto.jp2.JP2Decoder
